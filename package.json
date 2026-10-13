@@ -1,0 +1,26 @@
+{
+  "name": "loxecutivoauth",
+  "version": "1.0.0",
+  "description": "Auth layer for Loxecutivo",
+  "keywords": [
+    "auth",
+    "loxecutivo",
+    "jwt",
+    "express"
+  ],
+  "license": "MIT",
+  "author": "MMDDKK6500",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.6",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "mysql2": "^3.24.5"
+  }
+}
