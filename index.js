@@ -30,6 +30,10 @@ app.use(cors({
     },
 }));
 
+app.get('/health', (_req, res) => {
+    res.json({ status: 'ok', service: 'loxecutivo-auth' });
+});
+
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const validateCredentials = (email, senha) => {
     if (!email || !senha) return 'E-mail e palavra-passe são obrigatórios.';
