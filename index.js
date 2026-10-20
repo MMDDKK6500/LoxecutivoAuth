@@ -14,7 +14,7 @@ app.use(express.json());
 app.use(cors());
 
 // Endpoint para criar um novo utilizador (Registo)
-app.post('/registar', async (req, res) => {
+app.post('/registrar', async (req, res) => {
     const { email, senha } = req.body;
 
     // Validação básica
