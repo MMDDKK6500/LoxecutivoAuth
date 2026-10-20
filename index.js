@@ -13,17 +13,36 @@ if (!SECRET_KEY) {
     throw new Error('SECRET_KEY must be configured');
 }
 
-app.use(express.json());
-app.use(cors());
+app.disable('x-powered-by');
+app.use(express.json({ limit: '32kb' }));
+
+const allowedOrigins = (process.env.CORS_ORIGINS || 'https://loxecutivo.mmddkk.dev.br,http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+app.use(cors({
+    credentials: true,
+    origin(origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error('Origem não permitida.'));
+    },
+}));
+
+const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
+const validateCredentials = (email, senha) => {
+    if (!email || !senha) return 'E-mail e palavra-passe são obrigatórios.';
+    if (!/^\S+@\S+\.\S+$/.test(email)) return 'O e-mail informado é inválido.';
+    if (senha.length < 4 || senha.length > 128) return 'A palavra-passe deve ter entre 4 e 128 caracteres.';
+    return null;
+};
+const bearerToken = (request) => request.headers.authorization?.match(/^Bearer\s+(\S+)$/i)?.[1] || null;
 
 // Endpoint para criar um novo utilizador (Registo)
 app.post('/registrar', async (req, res) => {
-    const { email, senha } = req.body;
-
-    // Validação básica
-    if (!email || !senha) {
-        return res.status(400).json({ message: "E-mail e palavra-passe são obrigatórios." });
-    }
+    const email = normalizeEmail(req.body?.email);
+    const senha = typeof req.body?.senha === 'string' ? req.body.senha : '';
+    const validationError = validateCredentials(email, senha);
+    if (validationError) return res.status(400).json({ message: validationError });
 
     try {
         // 1. Verificar se o e-mail já está registado na base de dados
@@ -33,9 +52,8 @@ app.post('/registrar', async (req, res) => {
             return res.status(409).json({ message: "Este e-mail já se encontra registado." });
         }
 
-        // 2. Encriptar a palavra-passe (Hashing) com custo 10 (salt rounds)
-        const saltRounds = 10;
-        const senhaHash = await bcrypt.hash(senha, saltRounds);
+        // Use a deliberately expensive password hash and never store plaintext passwords.
+        const senhaHash = await bcrypt.hash(senha, 12);
 
         // 4. Inserir o novo utilizador na base de dados
         await pool.execute(
@@ -52,14 +70,18 @@ app.post('/registrar', async (req, res) => {
 });
 
 app.delete('/remover', async (req, res) => {
-    const { email, senha } = req.body;
-    
-    if (!email) {
-        return res.status(400).json({ message: "E-mail é obrigatório para remover o utilizador." });
-    }
+    const email = normalizeEmail(req.body?.email);
+    const senha = typeof req.body?.senha === 'string' ? req.body.senha : '';
+    const validationError = validateCredentials(email, senha);
+    if (validationError) return res.status(400).json({ message: validationError });
 
-    if (!senha) {
-        return res.status(400).json({ message: "Palavra-passe é obrigatória para remover o utilizador." });
+    const token = bearerToken(req);
+    if (!token) return res.status(401).json({ message: 'Token não fornecido.' });
+    try {
+        const tokenUser = jwt.verify(token, SECRET_KEY, { algorithms: ['HS256'] });
+        if (tokenUser.email !== email) return res.status(403).json({ message: 'A conta autenticada não corresponde ao e-mail informado.' });
+    } catch (_error) {
+        return res.status(401).json({ message: 'Token inválido ou expirado.' });
     }
 
     try {
@@ -94,29 +116,26 @@ app.delete('/remover', async (req, res) => {
 
 // Endpoint 1: Gerar o Token (Login)
 app.post('/login', async (req, res) => {
-    const { email, senha } = req.body;
+    const email = normalizeEmail(req.body?.email);
+    const senha = typeof req.body?.senha === 'string' ? req.body.senha : '';
+    const validationError = validateCredentials(email, senha);
+    if (validationError) return res.status(400).json({ auth: false, message: validationError });
 
     try {
         // O símbolo '?' protege contra SQL Injection
         const [usuarios] = await pool.execute('SELECT * FROM usuarios WHERE email = ?', [email]);
 
-        // Verifica se o usuário existe
-        if (usuarios.length === 0) {
-            return res.status(401).json({ auth: false, message: "Usuário não encontrado." });
-        }
-
         const usuario = usuarios[0];
+        const senhaValida = usuario ? await bcrypt.compare(senha, usuario.senha) : false;
 
-        // Compara a senha digitada com o hash salvo no banco (Ex: bcrypt.hashSync("123", 10))
-        const senhaValida = await bcrypt.compare(senha, usuario.senha);
-
-        if (!senhaValida) {
-            return res.status(401).json({ auth: false, message: "Senha incorreta." });
+        // The same response prevents account enumeration through the login endpoint.
+        if (!usuario || !senhaValida) {
+            return res.status(401).json({ auth: false, message: "Credenciais inválidas." });
         }
 
         // Gera o token JWT com os dados do banco
         const payload = { userId: usuario.id, email: usuario.email };
-        const token = jwt.sign(payload, SECRET_KEY, { expiresIn: '2h' });
+        const token = jwt.sign(payload, SECRET_KEY, { expiresIn: '2h', algorithm: 'HS256' });
 
         return res.json({ auth: true, token: token });
 
@@ -128,16 +147,28 @@ app.post('/login', async (req, res) => {
 
 // Endpoint 2: Validar o Token (Usado pelo Gateway ou pelo Core)
 app.post('/validar', (req, res) => {
-    const token = req.headers['authorization']?.split(' ')[1]; // Pega o token do header "Bearer <token>"
+    const token = bearerToken(req);
 
     if (!token) return res.status(401).json({ auth: false, message: "Token não fornecido." });
 
-    jwt.verify(token, SECRET_KEY, (err, decoded) => {
-        if (err) return res.status(401).json({ auth: false, message: "Token inválido ou expirado." });
-        
-        // Se o token for válido, devolve os dados decodificados para o Core
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY, { algorithms: ['HS256'] });
         return res.status(200).json({ auth: true, user: decoded });
-    });
+    } catch (_error) {
+        return res.status(401).json({ auth: false, message: "Token inválido ou expirado." });
+    }
 });
 
-app.listen(8082, () => console.log('Auth Service rodando na porta 8082'));
+app.use((error, _req, res, next) => {
+    if (error?.message === 'Origem não permitida.') {
+        return res.status(403).json({ message: error.message });
+    }
+    return next(error);
+});
+
+if (require.main === module) {
+    const port = Number(process.env.PORT || 8082);
+    app.listen(port, '127.0.0.1', () => console.log(`Auth Service rodando na porta ${port}`));
+}
+
+module.exports = { app, normalizeEmail, validateCredentials };
