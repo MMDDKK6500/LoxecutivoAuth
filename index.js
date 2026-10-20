@@ -22,6 +22,8 @@ const allowedOrigins = (process.env.CORS_ORIGINS || 'https://loxecutivo.mmddkk.d
     .filter(Boolean);
 app.use(cors({
     credentials: true,
+    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Accept'],
     origin(origin, callback) {
         if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
         return callback(new Error('Origem não permitida.'));
