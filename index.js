@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
@@ -6,9 +7,11 @@ const app = express();
 const cors = require('cors');
 
 
-require('dotenv').config();
 
 const SECRET_KEY = process.env.SECRET_KEY
+if (!SECRET_KEY) {
+    throw new Error('SECRET_KEY must be configured');
+}
 
 app.use(express.json());
 app.use(cors());
