@@ -91,3 +91,19 @@ test('rejects untrusted browser origins', async () => {
     const response = await request(app).options('/validar').set('Origin', 'https://attacker.example');
     assert.equal(response.status, 403);
 });
+
+test('MFA login returns an opaque challenge, never an access token', async () => {
+    const original = pool.execute;
+    const passwordHash = await bcrypt.hash('1234', 4);
+    pool.execute = async (sql) => sql.includes('usuario_mfa')
+        ? [[{ enabled: 1 }]] : [[{ id: 4, email: 'user@example.com', senha: passwordHash }]];
+    try {
+        const response = await request(app).post('/login').send({ email: 'user@example.com', senha: '1234' });
+        assert.equal(response.body.requiresTwoFactor, true);
+        assert.equal(response.body.token, undefined);
+        const denied = await request(app).post('/validar').set('Authorization', `Bearer ${response.body.challengeToken}`);
+        assert.equal(denied.status, 401);
+        const invalid = await request(app).post('/2fa/verify').send({ challengeToken: 'invalid', code: '123456' });
+        assert.equal(invalid.status, 401);
+    } finally { pool.execute = original; }
+});

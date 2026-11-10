@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS usuario_mfa (
+ usuario_id BIGINT PRIMARY KEY,
+ secret TEXT NOT NULL,
+ enabled BOOLEAN NOT NULL DEFAULT FALSE,
+ last_step BIGINT NOT NULL DEFAULT -1,
+ recovery JSON NOT NULL
+);

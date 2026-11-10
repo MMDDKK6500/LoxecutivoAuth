@@ -5,6 +5,8 @@ const pool = require('./db');
 const bcrypt = require('bcrypt');
 const app = express();
 const cors = require('cors');
+const mfa = require('./mfa');
+const { rateLimit } = require('express-rate-limit');
 
 
 
@@ -121,7 +123,7 @@ app.delete('/remover', async (req, res) => {
 
 
 // Endpoint 1: Gerar o Token (Login)
-app.post('/login', async (req, res) => {
+app.post('/login', rateLimit({ windowMs: 300000, limit: 30 }), async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     const senha = typeof req.body?.senha === 'string' ? req.body.senha : '';
     const validationError = validateCredentials(email, senha);
@@ -139,9 +141,15 @@ app.post('/login', async (req, res) => {
             return res.status(401).json({ auth: false, message: "Credenciais inválidas." });
         }
 
+        if (await mfa.enabled(pool, usuario.id)) {
+            return res.json({ requiresTwoFactor: true, challengeToken: mfa.issueChallenge(usuario) });
+        }
         // Gera o token JWT com os dados do banco
         const payload = { userId: usuario.id, email: usuario.email };
-        const token = jwt.sign(payload, SECRET_KEY, { expiresIn: '2h', algorithm: 'HS256' });
+        const token = jwt.sign(payload, SECRET_KEY, {
+          expiresIn: "2h",
+          algorithm: "HS256",
+        });
 
         return res.json({ auth: true, token: token });
 
@@ -177,4 +185,5 @@ if (require.main === module) {
     app.listen(port, '127.0.0.1', () => console.log(`Auth Service rodando na porta ${port}`));
 }
 
+mfa.register(app, pool, SECRET_KEY);
 module.exports = { app, normalizeEmail, validateCredentials };
